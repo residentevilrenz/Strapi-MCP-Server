@@ -2,8 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# Strapi MCP Server Development Guide
-
 ## Development Commands
 
 - `npm run build` - Compile TypeScript to build/ directory and make executable
@@ -11,66 +9,106 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run start` - Start the compiled server from build/index.js
 - `npm run dev` - Run directly with ts-node for development
 - `npm run dev:watch` - Run with nodemon for hot reload during development
-- `npm run prepublishOnly` - Prepare for publishing (runs build automatically)
 
-## Testing
+## Debugging
 
-- No formal test suite exists; test manually using MCP client
-- Use Claude Desktop or other MCP clients for integration testing
-- Configuration testing: create test config in `~/.mcp/strapi-mcp-server.config.json`
+Enable detailed logging via environment variables:
 
-## Code Style Guidelines
+```bash
+# Log levels: ERROR, WARN, INFO, DEBUG, TRACE
+MCP_LOG_LEVEL=DEBUG npm run dev
 
-- **TypeScript**: Use strict mode with ES2022 target
-- **Imports**: Use ES modules (import/export)
-- **Naming**: camelCase for variables/functions, PascalCase for types/interfaces
-- **Error Handling**: Use try/catch blocks with specific error types
-- **Types**: Prefer explicit typing over implicit, use interfaces for object shapes
-- **Comments**: JSDoc for public functions, inline for complex logic
-- **Async**: Use async/await pattern for asynchronous code
-- **Structure**: Group related functions together, export interfaces/types
-- **Formatting**: 2-space indentation, semicolons required
+# Enable/disable specific features
+MCP_ENABLE_REQUEST_TRACKING=true
+MCP_ENABLE_PERFORMANCE_MONITORING=true
+MCP_SANITIZE_DATA=true
+MCP_MAX_LOG_LENGTH=10000
+MCP_INCLUDE_STACK_TRACE=true
 
-## Project Architecture
+# Enable MCP SDK debug logging
+DEBUG=mcp:* npm run dev
+```
 
-- Single TypeScript file (`src/index.ts`) implements the entire MCP server
-- Built on @modelcontextprotocol/sdk with stdio transport for CLI usage
-- Configuration loaded from `~/.mcp/strapi-mcp-server.config.json`
-- Server implements Model Context Protocol (MCP) for Strapi CMS
-- Serves as middleware between AI assistants and Strapi instances
-- Handles schema introspection, REST operations, media uploads
-- Current version focuses on security and version compatibility
-- Supports both Strapi v4 and v5 with automatic version detection
+Testing with MCP Inspector:
+```bash
+npm install -g @modelcontextprotocol/inspector
+mcp-inspector  # Start inspector at http://localhost:5173
+```
 
-## Key Features
+## Architecture
 
-- Content type and component schema introspection
-- REST API operations with version-specific adaptations
-- Media upload and processing with format conversion
-- Strict write protection policy for secure operations
-- Comprehensive documentation in server capabilities
-- Multiple server configuration support
+### Single-File Design
 
-## Tools
+The entire server is implemented in `src/index.ts` (~1800 lines). Key sections in order:
 
-- **strapi_list_servers** - List configured Strapi servers
-- **strapi_get_content_types** - Get schema for all content types
-- **strapi_get_components** - Get component schema with pagination
-- **strapi_rest** - Execute REST API operations with validation
-- **strapi_upload_media** - Upload media with processing options
+1. **Logging System** (lines ~56-424) - `McpLogger` class with structured JSON logging to stderr
+2. **Zod Validation Schemas** (lines ~454-627) - Input validation for all 5 tools
+3. **Version Differences** (lines ~747-826) - `STRAPI_VERSION_DIFFERENCES` constant for v4/v5
+4. **Configuration** (lines ~828-851) - Loads from `~/.mcp/strapi-mcp-server.config.json`
+5. **Server Setup** (lines ~853-1024) - MCP server with capabilities including security policy
+6. **Helper Functions** (lines ~1026-1167) - `getServerConfig`, `makeStrapiRequest`, image processing
+7. **Tool Handlers** (lines ~1241-1675) - `ListToolsRequestSchema` and `CallToolRequestSchema` handlers
+8. **REST/Upload Functions** (lines ~1678-1812) - `makeRestRequest`, `handleStrapiError`
 
-## Strapi Version Differences
+### Validation Flow
 
-- **v4**: Numeric IDs, nested attributes, data wrapper in responses
-- **v5**: Document-based IDs, flat structure, direct attribute access
+All tool inputs are validated through Zod schemas before execution:
 
-## Security Model
+```
+Tool Call → validateToolInput() → Zod Schema → Validated Args → Handler
+                    ↓ (on error)
+          McpError with detailed validation errors
+```
 
-- All write operations require explicit user authorization
-- Protected operations: POST, PUT, DELETE, media uploads
-- Strict validation and security policy enforcement
-- JWT authentication for all Strapi interactions
+Key schemas: `ListServersSchema`, `GetContentTypesSchema`, `GetComponentsSchema`, `RestSchema`, `UploadMediaSchema`
+
+### Security Model
+
+Write operations (POST, PUT, DELETE, media upload) require `userAuthorized: true` parameter. This is enforced at two levels:
+1. Zod schema refinement (validation fails if missing)
+2. Runtime check in `makeRestRequest()` and `uploadMedia()`
+
+### Strapi Version Handling
+
+Supports both v4 and v5 with automatic detection from config version string formats:
+- `"5.*"`, `"4.*"` - Wildcard
+- `"v4"`, `"v5"` - Simple prefix
+- `"4.1.5"`, `"5.0.0"` - Specific version
+
+## Tools Provided
+
+| Tool | Description |
+|------|-------------|
+| `strapi_list_servers` | List configured servers with version info |
+| `strapi_get_content_types` | Schema introspection for all content types |
+| `strapi_get_components` | Component schemas with pagination |
+| `strapi_rest` | REST API operations (GET/POST/PUT/DELETE) |
+| `strapi_upload_media` | Media upload with format conversion via Sharp |
+
+## Code Style
+
+- TypeScript strict mode with ES2022 target, Node16 module resolution
+- ES modules (import/export)
+- 2-space indentation, semicolons required
+- camelCase for variables/functions, PascalCase for types/interfaces
+- Logs go to stderr (not stdout) to avoid interfering with MCP protocol
+
+## Key Dependencies
+
+- `@modelcontextprotocol/sdk` - MCP server implementation
+- `zod` - Runtime input validation
+- `sharp` - Image processing and format conversion
+- `qs` - Query string serialization for REST params
+- `form-data` + `node-fetch` - Media upload handling
+
+## Version Differences (v4 vs v5)
+
+| Aspect | v4 | v5 |
+|--------|----|----|
+| ID Field | `id` (numeric) | `documentId` (string) |
+| Response Structure | Wrapped in `data` | Flat/direct access |
+| Attributes | Nested under `attributes` | Direct at root level |
 
 ## Commit Guidelines
 
-- Git-Commit ohne jegliche Erwähnung von Claude, Anthropic oder anderen werblichen Inhalten
+- Git commits in English without any mention of Claude, Anthropic, or promotional content
