@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2025-01-07
+
+### Fixed
+
+- **Issue #8**: JSON Schema now correctly generates `oneOf` arrays for union types, fixing validation errors when Claude Desktop passes values as strings (e.g., `userAuthorized: "true"` instead of `true`)
+
+### Changed
+
+- **BREAKING**: Migrated from Zod v3 to Zod v4
+  - `z.record(z.any())` → `z.record(z.string(), z.any())`
+  - `ZodError.errors` → `ZodError.issues`
+  - `z.string().url()` → `z.url()`
+  - `errorMap` → `error` parameter for enums
+- Updated all dependencies to latest versions:
+  - `@modelcontextprotocol/sdk`: 1.13.3 → 1.25.1
+  - `zod`: 3.25.76 → 4.3.5
+  - `typescript`: 5.8.3 → 5.9.3
+  - `@types/node`: 24.x → 25.0.3
+  - `sharp`: 0.34.2 → 0.34.5
+  - And other minor updates
+- Enhanced tool descriptions with comprehensive documentation:
+  - Security policy and best practices in `strapi_list_servers`
+  - Initialization steps and schema conventions in `strapi_get_content_types`
+  - Debugging guide and Strapi v5 specifics in `strapi_rest`
+  - Upload workflow documentation in `strapi_upload_media`
+- Simplified binary name from `@bschauer/strapi-mcp-server` to `strapi-mcp-server`
+
+### Removed
+
+- Unused imports (`createHash`)
+- Unused type definitions (`ServerSchema`, input type aliases)
+- Custom MCP capabilities (not supported in SDK 1.25.1)
+
 ## [2.6.0] - 2025-07-03
 
 ### Added

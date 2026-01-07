@@ -51,7 +51,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import qs from 'qs';
 import { z } from 'zod';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 
 // ===========================================
 // Comprehensive Logging and Debugging System
@@ -364,11 +364,11 @@ class McpLogger {
             requestId,
             toolName,
             input: this.sanitizeData(input),
-            validationErrors: error.errors.map(err => ({
+            validationErrors: error.issues.map((err) => ({
                 path: err.path.join('.'),
                 message: err.message,
                 code: err.code,
-                received: 'received' in err ? err.received : undefined
+                received: 'input' in err ? err.input : undefined
             }))
         };
         
@@ -454,11 +454,6 @@ type StrapiVersionDifferences = {
 // Zod Schemas for Tool Input Validation
 // ===========================================
 
-// Base schema for server parameter
-const ServerSchema = z.object({
-    server: z.string().min(1, "Server name is required and cannot be empty")
-});
-
 // Schema for strapi_list_servers tool (no parameters)
 const ListServersSchema = z.object({}).strict();
 
@@ -476,7 +471,7 @@ const GetComponentsSchema = z.object({
             const num = parseInt(str);
             if (isNaN(num) || num < 1) {
                 ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
+                    code: "custom",
                     message: "Page must be a positive integer"
                 });
                 return z.NEVER;
@@ -490,7 +485,7 @@ const GetComponentsSchema = z.object({
             const num = parseInt(str);
             if (isNaN(num) || num < 1) {
                 ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
+                    code: "custom",
                     message: "Page size must be a positive integer"
                 });
                 return z.NEVER;
@@ -505,16 +500,16 @@ const RestSchema = z.object({
     server: z.string().min(1, "Server name is required and cannot be empty"),
     endpoint: z.string().min(1, "Endpoint is required and cannot be empty"),
     method: z.enum(["GET", "POST", "PUT", "DELETE"], {
-        errorMap: () => ({ message: "Method must be one of: GET, POST, PUT, DELETE" })
+        error: "Method must be one of: GET, POST, PUT, DELETE"
     }).optional().default("GET"),
     params: z.union([
-        z.record(z.any()),
+        z.record(z.string(), z.any()),
         z.string().transform((str, ctx) => {
             try {
                 return JSON.parse(str);
             } catch (e) {
                 ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
+                    code: "custom",
                     message: "Params must be a valid JSON object or object"
                 });
                 return z.NEVER;
@@ -522,13 +517,13 @@ const RestSchema = z.object({
         })
     ]).optional(),
     body: z.union([
-        z.record(z.any()),
+        z.record(z.string(), z.any()),
         z.string().transform((str, ctx) => {
             try {
                 return JSON.parse(str);
             } catch (e) {
                 ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
+                    code: "custom",
                     message: "Body must be a valid JSON object or object"
                 });
                 return z.NEVER;
@@ -541,7 +536,7 @@ const RestSchema = z.object({
             if (str === "true") return true;
             if (str === "false") return false;
             ctx.addIssue({
-                code: z.ZodIssueCode.custom,
+                code: "custom",
                 message: "userAuthorized must be boolean true/false or string 'true'/'false'"
             });
             return z.NEVER;
@@ -572,9 +567,9 @@ const MediaMetadataSchema = z.object({
 // Schema for strapi_upload_media tool
 const UploadMediaSchema = z.object({
     server: z.string().min(1, "Server name is required and cannot be empty"),
-    url: z.string().url("Must be a valid URL"),
+    url: z.url({ error: "Must be a valid URL" }),
     format: z.enum(["jpeg", "png", "webp", "original"], {
-        errorMap: () => ({ message: "Format must be one of: jpeg, png, webp, original" })
+        error: "Format must be one of: jpeg, png, webp, original"
     }).optional().default("original"),
     quality: z.union([
         z.number().int().min(1, "Quality must be between 1 and 100").max(100, "Quality must be between 1 and 100"),
@@ -582,7 +577,7 @@ const UploadMediaSchema = z.object({
             const num = parseInt(str);
             if (isNaN(num) || num < 1 || num > 100) {
                 ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
+                    code: "custom",
                     message: "Quality must be between 1 and 100"
                 });
                 return z.NEVER;
@@ -597,7 +592,7 @@ const UploadMediaSchema = z.object({
             if (str === "true") return true;
             if (str === "false") return false;
             ctx.addIssue({
-                code: z.ZodIssueCode.custom,
+                code: "custom",
                 message: "userAuthorized must be boolean true/false or string 'true'/'false'"
             });
             return z.NEVER;
@@ -626,13 +621,6 @@ const ToolSchemas = {
     strapi_upload_media: UploadMediaSchema
 } as const;
 
-// TypeScript types derived from Zod schemas
-type ListServersInput = z.infer<typeof ListServersSchema>;
-type GetContentTypesInput = z.infer<typeof GetContentTypesSchema>;
-type GetComponentsInput = z.infer<typeof GetComponentsSchema>;
-type RestInput = z.infer<typeof RestSchema>;
-type UploadMediaInput = z.infer<typeof UploadMediaSchema>;
-
 // Validation helper function
 function validateToolInput<T extends keyof typeof ToolSchemas>(
     toolName: T,
@@ -647,20 +635,20 @@ function validateToolInput<T extends keyof typeof ToolSchemas>(
             inputType: typeof input,
             hasInput: input !== undefined
         });
-        
+
         const result = schema.parse(input);
-        
+
         logger.debug(`Validation successful for tool: ${toolName}`, {
             requestId,
             toolName
         });
-        
-        return result;
+
+        return result as z.infer<typeof ToolSchemas[T]>;
     } catch (error) {
         if (error instanceof z.ZodError) {
             logger.logValidationError(toolName, error, input, requestId);
             
-            const errorMessages = error.errors.map(err => {
+            const errorMessages = error.issues.map((err) => {
                 const path = err.path.length > 0 ? `${err.path.join('.')}: ` : '';
                 return `${path}${err.message}`;
             });
@@ -677,54 +665,127 @@ function validateToolInput<T extends keyof typeof ToolSchemas>(
     }
 }
 
+// Helper to safely access Zod internal definition (compatible with v3 and v4)
+function getZodDef(zodType: z.ZodTypeAny): any {
+    // Zod v4 uses _zod.def, Zod v3 uses _def
+    const type = zodType as any;
+    return type._zod?.def ?? type._def ?? {};
+}
+
+// Helper function to convert a single Zod type to JSON Schema type
+function zodTypeToJsonSchema(zodType: z.ZodTypeAny): any {
+    const def = getZodDef(zodType);
+
+    // Unwrap effects (transforms) to get the input type
+    if (def.typeName === 'ZodEffects' || (zodType as any)._zod?.typeName === 'ZodEffects') {
+        const innerSchema = def.schema ?? def.innerType;
+        if (innerSchema) {
+            return zodTypeToJsonSchema(innerSchema);
+        }
+    }
+
+    if (zodType instanceof z.ZodString) {
+        const schema: any = { type: "string" };
+        const checks = def.checks ?? [];
+        if (checks.some((check: any) => check.kind === 'min' && check.value > 0)) {
+            schema.minLength = 1;
+        }
+        return schema;
+    }
+    if (zodType instanceof z.ZodNumber) {
+        const schema: any = { type: "number" };
+        const checks = def.checks ?? [];
+        for (const check of checks) {
+            if (check.kind === 'min') schema.minimum = check.value;
+            if (check.kind === 'max') schema.maximum = check.value;
+            if (check.kind === 'int') schema.type = "integer";
+        }
+        return schema;
+    }
+    if (zodType instanceof z.ZodBoolean) {
+        return { type: "boolean" };
+    }
+    if (zodType instanceof z.ZodEnum) {
+        // Zod v4: entries, Zod v3: values
+        const values = def.entries ? Object.keys(def.entries) : def.values;
+        return { type: "string", enum: values };
+    }
+    if (zodType instanceof z.ZodRecord) {
+        return { type: "object", additionalProperties: true };
+    }
+    if (zodType instanceof z.ZodObject) {
+        return { type: "object", additionalProperties: true };
+    }
+
+    return { type: "object", additionalProperties: true };
+}
+
+// Helper function to process union types into JSON Schema oneOf
+function unionToJsonSchema(unionType: z.ZodUnion<any>): any {
+    const def = getZodDef(unionType);
+    const options = (def.options ?? []) as z.ZodTypeAny[];
+    const schemas = options.map(opt => zodTypeToJsonSchema(opt));
+
+    // Deduplicate schemas by type
+    const uniqueSchemas: any[] = [];
+    const seenTypes = new Set<string>();
+
+    for (const schema of schemas) {
+        const key = JSON.stringify(schema);
+        if (!seenTypes.has(key)) {
+            seenTypes.add(key);
+            uniqueSchemas.push(schema);
+        }
+    }
+
+    // If only one unique schema, return it directly
+    if (uniqueSchemas.length === 1) {
+        return uniqueSchemas[0];
+    }
+
+    return { oneOf: uniqueSchemas };
+}
+
+// Helper function to unwrap nested Zod types (Optional, Default, etc.)
+function unwrapZodType(zodType: z.ZodTypeAny): z.ZodTypeAny {
+    const def = getZodDef(zodType);
+    if (zodType instanceof z.ZodOptional) {
+        return unwrapZodType(def.innerType);
+    }
+    if (zodType instanceof z.ZodDefault) {
+        return unwrapZodType(def.innerType);
+    }
+    return zodType;
+}
+
 // Helper function to convert Zod schema to JSON schema for MCP compatibility
 function zodToJsonSchema(schema: z.ZodSchema): any {
-    // This is a simplified conversion - in production, you might want to use a library like zod-to-json-schema
     if (schema instanceof z.ZodObject) {
         const shape = schema.shape;
         const properties: any = {};
         const required: string[] = [];
-        
+
         for (const [key, value] of Object.entries(shape)) {
-            if (value instanceof z.ZodString) {
-                properties[key] = { type: "string" };
-                if (value._def.checks?.some((check: any) => check.kind === 'min' && check.value > 0)) {
-                    properties[key].minLength = 1;
-                }
-            } else if (value instanceof z.ZodNumber) {
-                properties[key] = { type: "number" };
-                const checks = value._def.checks || [];
-                for (const check of checks) {
-                    if (check.kind === 'min') properties[key].minimum = check.value;
-                    if (check.kind === 'max') properties[key].maximum = check.value;
-                    if (check.kind === 'int') properties[key].type = "integer";
-                }
-            } else if (value instanceof z.ZodBoolean) {
-                properties[key] = { type: "boolean" };
-            } else if (value instanceof z.ZodEnum) {
-                properties[key] = { type: "string", enum: value._def.values };
-            } else if (value instanceof z.ZodOptional) {
-                const innerSchema = value._def.innerType;
-                if (innerSchema instanceof z.ZodString) {
-                    properties[key] = { type: "string" };
-                } else if (innerSchema instanceof z.ZodNumber) {
-                    properties[key] = { type: "number" };
-                } else if (innerSchema instanceof z.ZodBoolean) {
-                    properties[key] = { type: "boolean" };
-                } else if (innerSchema instanceof z.ZodEnum) {
-                    properties[key] = { type: "string", enum: innerSchema._def.values };
-                } else {
-                    properties[key] = { type: "object", additionalProperties: true };
-                }
+            const zodValue = value as z.ZodTypeAny;
+            const unwrapped = unwrapZodType(zodValue);
+
+            // Check if it's a union type (after unwrapping Optional/Default)
+            if (unwrapped instanceof z.ZodUnion) {
+                properties[key] = unionToJsonSchema(unwrapped);
             } else {
-                properties[key] = { type: "object", additionalProperties: true };
+                properties[key] = zodTypeToJsonSchema(unwrapped);
             }
-            
-            if (!(value instanceof z.ZodOptional)) {
+
+            // Only mark as required if not optional and not having a default
+            const isOptional = zodValue instanceof z.ZodOptional ||
+                              zodValue instanceof z.ZodDefault ||
+                              (zodValue instanceof z.ZodOptional && zodValue._def.innerType instanceof z.ZodDefault);
+
+            if (!isOptional) {
                 required.push(key);
             }
         }
-        
+
         return {
             $schema: "http://json-schema.org/draft-07/schema#",
             type: "object",
@@ -733,7 +794,7 @@ function zodToJsonSchema(schema: z.ZodSchema): any {
             additionalProperties: false
         };
     }
-    
+
     return {
         $schema: "http://json-schema.org/draft-07/schema#",
         type: "object",
@@ -854,171 +915,11 @@ try {
 const server = new Server(
     {
         name: "strapi-mcp",
-        version: "2.7.1",
+        version: "2.8.0",
     },
     {
         capabilities: {
-            tools: {},
-            strapi: {
-                security: {
-                    write_protection: {
-                        policy: "STRICT_USER_AUTHORIZATION_REQUIRED",
-                        description: "No write operations without explicit user authorization",
-                        protected_operations: [
-                            "POST /api/* (Create)",
-                            "PUT /api/* (Update)",
-                            "DELETE /api/* (Delete)",
-                            "POST /api/upload (Media Upload)"
-                        ],
-                        requirements: [
-                            "Explicit user authorization for each write operation",
-                            "No automatic updates or deletions",
-                            "User confirmation for each data change",
-                            "Logging of all write operations"
-                        ],
-                        validation_steps: [
-                            "Verification of user authorization",
-                            "Validation of data to be modified",
-                            "User confirmation of operation",
-                            "Logging of changes with user reference"
-                        ]
-                    }
-                },
-                versions: STRAPI_VERSION_DIFFERENCES,
-                defaultVersion: "v5",
-                supportedVersions: ["v4", "v5"],
-                migrationGuides: {
-                    "v4_to_v5": {
-                        steps: [
-                            "Update database (better-sqlite3, mysql2)",
-                            "Replace id with documentId",
-                            "Remove data wrapper structure",
-                            "Update lifecycle hooks",
-                            "Check plugin compatibility"
-                        ],
-                        compatibilityFlags: {
-                            rest: "Strapi-Response-Format: v4",
-                            graphql: "v4CompatibilityMode: true"
-                        }
-                    }
-                },
-                documentation: {
-                    schema_conventions: {
-                        description: "Schema & naming conventions for Content Types",
-                        examples: {
-                            schema: {
-                                singularName: "article",
-                                pluralName: "articles",
-                                collectionName: "articles"
-                            },
-                            endpoints: {
-                                rest: "api/articles",
-                                graphql_collection: "query { articles }",
-                                graphql_single: "query { article }"
-                            }
-                        }
-                    },
-                    api_patterns: {
-                        rest: {
-                            collection: "GET /api/{pluralName}",
-                            single: "GET /api/{pluralName}/{id}",
-                            create: "POST /api/{pluralName}",
-                            update: "PUT /api/{pluralName}/{id}",
-                            delete: "DELETE /api/{pluralName}/{id}"
-                        },
-                        graphql: {
-                            collection: "query { pluralName(pagination: { page: 1, pageSize: 100 }) { data { id attributes } } }",
-                            single: "query { singularName(id: 1) { data { id attributes } } }",
-                            create: "mutation { createPluralName(data: { field: value }) { data { id } } }",
-                            update: "mutation { updatePluralName(id: 1, data: { field: value }) { data { id } } }"
-                        }
-                    },
-                    media_handling: {
-                        upload_steps: [
-                            "Upload via strapi_upload_media",
-                            "Provide metadata (name, caption, alternativeText)",
-                            "Choose format (jpeg, png, webp)",
-                            "Get image ID from response"
-                        ],
-                        linking_steps: [
-                            "Use PUT request",
-                            "Include complete data structure",
-                            "Use documentId for v5",
-                            "Images as array"
-                        ],
-                        example: {
-                            upload: {
-                                url: "https://example.com/image.jpg",
-                                metadata: {
-                                    name: "article-name",
-                                    caption: "Article Caption",
-                                    alternativeText: "Article Alt Text"
-                                }
-                            },
-                            link: {
-                                method: "PUT",
-                                endpoint: "api/articles/{documentId}",
-                                body: {
-                                    data: {
-                                        images: ["imageId"]
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    common_errors: {
-                        "404": [
-                            "Numerical ID used instead of documentId",
-                            "Incorrect plural/singular form in endpoint",
-                            "DocumentId missing"
-                        ],
-                        "405": ["Incorrect endpoint (/article instead of /articles)"],
-                        "400": ["Data-Wrapper missing"]
-                    },
-                    best_practices: [
-                        "Always check schema first",
-                        "When using URLs, first validate the content with webtools",
-                        "Always use documentId for IDs",
-                        "Always use data-Wrapper for updates",
-                        "Always use pluralName for collections",
-                        "Check if singular/plural applies based on API type",
-                        "In Strapi 5: Direct attribute query without data-Wrapper",
-                        "Use documentId instead of id"
-                    ],
-                    debugging_guide: {
-                        steps: [
-                            "When 404: Check if plural/singular form is correct",
-                            "When 400: Check if data-Wrapper is present",
-                            "When errors in URLs: First validate with webtools",
-                            "When ID problems: Check on documentId",
-                            "Check schema and configuration in Strapi"
-                        ]
-                    },
-                    graphql_tips: {
-                        pagination: {
-                            example: `query {
-                                articles(pagination: { page: 1, pageSize: 10 }) {
-                                    documentId
-                                    name
-                                }
-                            }`
-                        },
-                        best_practices: [
-                            "Complete attribute specification",
-                            "No pagination parameter for simple queries",
-                            "Precise attribute writing"
-                        ]
-                    },
-                    initialization_steps: [
-                        "Get schema and analyze",
-                        "Capture Content Types and structures",
-                        "Remember endpoint names (pluralName/singularName)",
-                        "Document fields and types",
-                        "Identify relations",
-                        "Consider required fields and validations"
-                    ]
-                }
-            }
+            tools: {}
         },
     }
 );
@@ -1243,12 +1144,56 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         tools: [
             {
                 name: "strapi_list_servers",
-                description: "List all available Strapi servers from the configuration.",
+                description: `List all available Strapi servers from the configuration.
+
+## Security Policy
+STRICT_USER_AUTHORIZATION_REQUIRED: No write operations without explicit user authorization.
+Protected operations: POST (Create), PUT (Update), DELETE (Delete), Media Upload.
+All write operations require userAuthorized: true parameter.
+
+## Strapi Version Support
+Supports both Strapi v4 and v5 with automatic version detection.
+
+### Version Differences
+- v4: Numeric IDs, nested attributes under 'attributes', data wrapper in responses
+- v5: Document-based IDs (documentId), flat structure, direct attribute access
+
+### Common Errors
+- 404: Using numeric ID instead of documentId, wrong plural/singular form
+- 405: Incorrect endpoint (/article instead of /articles)
+- 400: Missing data wrapper in request body
+
+### Best Practices
+1. Always check schema first with strapi_get_content_types
+2. Use documentId (not numeric id) for Strapi v5
+3. Always use data wrapper for updates: { data: { field: value } }
+4. Use pluralName for collection endpoints (api/articles)
+5. Validate URLs with webtools before using them`,
                 inputSchema: zodToJsonSchema(ToolSchemas.strapi_list_servers),
             },
             {
                 name: "strapi_get_content_types",
-                description: "Get all content types from Strapi. Returns the complete schema of all content types.",
+                description: `Get all content types from Strapi. Returns the complete schema of all content types.
+
+## Initialization Steps (ALWAYS DO FIRST)
+1. Get schema and analyze with this tool
+2. Capture Content Types and structures
+3. Remember endpoint names (pluralName/singularName)
+4. Document fields and types
+5. Identify relations
+6. Consider required fields and validations
+
+## Schema Conventions
+- singularName: Used for single item queries (e.g., "article")
+- pluralName: Used for collection endpoints (e.g., "articles")
+- collectionName: Database collection name
+
+## Endpoint Patterns
+- Collection: GET /api/{pluralName}
+- Single: GET /api/{pluralName}/{id}
+- Create: POST /api/{pluralName}
+- Update: PUT /api/{pluralName}/{id}
+- Delete: DELETE /api/{pluralName}/{id}`,
                 inputSchema: {
                     ...zodToJsonSchema(ToolSchemas.strapi_get_content_types),
                     properties: {
@@ -1286,30 +1231,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "strapi_rest",
-                description: "Execute REST API requests against Strapi endpoints. IMPORTANT: All write operations (POST, PUT, DELETE) require explicit user authorization via the userAuthorized parameter.\n\n" +
-                    "1. Reading components:\n" +
-                    "params: { populate: ['SEO'] } // Populate a component\n" +
-                    "params: { populate: { SEO: { fields: ['Title', 'seoDescription'] } } } // With field selection\n\n" +
-                    "2. Updating components (REQUIRES USER AUTHORIZATION):\n" +
-                    "body: {\n" +
-                    "  data: {\n" +
-                    "    // For single components:\n" +
-                    "    componentName: {\n" +
-                    "      Title: 'value',\n" +
-                    "      seoDescription: 'value'\n" +
-                    "    },\n" +
-                    "    // For repeatable components:\n" +
-                    "    componentName: [\n" +
-                    "      { field: 'value' }\n" +
-                    "    ]\n" +
-                    "  }\n" +
-                    "}\n" +
-                    "userAuthorized: true // Must set this to true for POST/PUT/DELETE after getting user permission\n\n" +
-                    "3. Other parameters:\n" +
-                    "- fields: Select specific fields\n" +
-                    "- filters: Filter results\n" +
-                    "- sort: Sort results\n" +
-                    "- pagination: Page through results",
+                description: `Execute REST API requests against Strapi endpoints. IMPORTANT: All write operations (POST, PUT, DELETE) require explicit user authorization via the userAuthorized parameter.
+
+## Reading Data
+params: { populate: ['SEO'] } // Populate a component
+params: { populate: { SEO: { fields: ['Title', 'seoDescription'] } } } // With field selection
+params: { filters: { title: { $contains: 'search' } } } // Filter results
+params: { sort: ['createdAt:desc'] } // Sort results
+params: { pagination: { page: 1, pageSize: 10 } } // Pagination
+
+## Writing Data (REQUIRES userAuthorized: true)
+body: {
+  data: {
+    componentName: { Title: 'value' }, // Single component
+    componentName: [{ field: 'value' }] // Repeatable component
+  }
+}
+
+## Debugging Guide
+- 404 Error: Check plural/singular form, use documentId not numeric id
+- 400 Error: Check if data wrapper is present in body
+- 405 Error: Check endpoint format (/articles not /article)
+- URL Errors: Validate URLs with webtools first
+- ID Problems: Use documentId for Strapi v5
+
+## Strapi v5 Specifics
+- Use documentId instead of numeric id
+- Direct attribute access (no nested attributes)
+- No data wrapper in GET responses`,
                 inputSchema: {
                     ...zodToJsonSchema(ToolSchemas.strapi_rest),
                     properties: {
@@ -1345,7 +1294,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "strapi_upload_media",
-                description: "Upload media to Strapi's media library from a URL with format conversion, quality control, and metadata options. IMPORTANT: This is a write operation that REQUIRES explicit user authorization via the userAuthorized parameter.",
+                description: `Upload media to Strapi's media library from a URL with format conversion, quality control, and metadata options. IMPORTANT: This is a write operation that REQUIRES explicit user authorization via the userAuthorized parameter.
+
+## Upload Steps
+1. Upload via strapi_upload_media with URL and metadata
+2. Get image ID from response
+3. Link to content using strapi_rest PUT request
+
+## Linking Images to Content (Strapi v5)
+After upload, use PUT request to link:
+{
+  "method": "PUT",
+  "endpoint": "api/articles/{documentId}",
+  "body": { "data": { "images": ["imageId"] } },
+  "userAuthorized": true
+}`,
                 inputSchema: {
                     ...zodToJsonSchema(ToolSchemas.strapi_upload_media),
                     properties: {
@@ -1415,8 +1378,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     try {
         if (name === "strapi_list_servers") {
-            // Validate input using Zod
-            const validatedArgs = validateToolInput("strapi_list_servers", args, requestId);
+            // Validate input using Zod (no args for this tool)
+            validateToolInput("strapi_list_servers", args, requestId);
             if (Object.keys(config).length === 0) {
                 const exampleConfig = {
                     "myserver": {
@@ -1815,7 +1778,7 @@ async function handleStrapiError(response: Response, context: string, requestId?
 async function main() {
     try {
         logger.info("Starting Strapi MCP Server", {
-            version: "2.7.1",
+            version: "2.8.0",
             configuredServers: Object.keys(config).length,
             logLevel: LogLevel[logger.getConfig().level]
         });
